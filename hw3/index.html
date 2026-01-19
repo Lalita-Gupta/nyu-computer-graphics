@@ -1,0 +1,55 @@
+<pre>
+
+<big><big><b>BUILDING A MATRIX LIBRARY</b></big></big>
+
+   function Matrix() {
+      this.identity    = () => value = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+      this.translate   = (x,y,z) => value = multiply(value, [1,0,0,0, 0,1,0,0, 0,0,1,0, x,y,z,1]);
+
+      this.rotateX     = theta   => <font color=blue>value = multiply(value, [1,0,0,0,                               0,Math.cos(theta),Math.sin(theta),0,   0,-Math.sin(theta),Math.cos(theta),0, 0,0,0,1]); </font>
+
+      this.rotateY     = theta   => <font color=blue>value = multiply(value, [Math.cos(theta),0,-Math.sin(theta),0,  0,1,0,0,                               Math.sin(theta),0,Math.cos(theta),0,  0,0,0,1]); </font>
+
+      this.rotateZ     = theta   => <font color=blue>value = multiply(value, [Math.cos(theta),Math.sin(theta),0,0,   -Math.sin(theta),Math.cos(theta),0,0,  0,0,1,0,                              0,0,0,1]); </font>\
+
+      this.scale       = (x,y,z) => <font color=blue>value = multiply(value, [x,0,0,0, 0,y,0,0, 0,0,z,0, 0,0,0,1]);</font>
+
+      this.perspective = (x,y,z) => <font color=blue>value = multiply(value, [1,0,0,x, 0,1,0,y, 0,0,1,z, 0,0,0,1]);</font>
+
+      this.get = () => value;
+      this.set = v => value = v;
+      this.transform = vector => {
+         <font color=blue>
+        let transformed_vector = [0,0,0,0];
+
+        transformed_vector = [
+        value[0] * vector[0] + value[4] * vector[1] + value[8]  * vector[2] + value[12] * vector[3],
+        value[1] * vector[0] + value[5] * vector[1] + value[9]  * vector[2] + value[13] * vector[3],
+        value[2] * vector[0] + value[6] * vector[1] + value[10] * vector[2] + value[14] * vector[3],
+        value[3] * vector[0] + value[7] * vector[1] + value[11] * vector[2] + value[15] * vector[3]
+        ];
+
+        return transformed_vector;
+        </font>
+      }
+
+      let value = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+
+      let multiply = (matrix1,matrix2) => {
+         <font color=blue>
+        let result = [0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0];
+
+        for(let row = 0; row < 4; row++) {
+            for (let col = 0; col < 4; col++) {
+                for (let i = 0; i < 4; i++){
+                    result[row + col * 4] = result[row + col * 4] + (matrix1[row + i * 4] * matrix2[i + col * 4]); 
+                }
+            }
+        }
+
+        return result;
+         </font>
+      }
+
+   }
+

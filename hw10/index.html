@@ -1,0 +1,660 @@
+<html>
+<head>
+   <style>
+      body {
+         margin: 0;
+         padding: 0;
+      }
+      canvas {
+         position: absolute;
+         width: 100%;
+         height: 100%;
+      }
+      .buttons {
+         position: absolute;
+         z-index: 1;
+      }
+      button {
+         position: relative;
+      }
+   </style>
+</head>
+<body>
+   <div class="buttons">
+      <button id="editor">Editor</button>
+      <div id="options_editor" style="display: none;">
+         <button name="spline" id="spline">Add Points</button>
+         <button name="move" id="move">Move Point</button>
+         <button name="remove" id="remove">Remove Point</button>
+         <button name="clear" id="clear">Clear All</button>
+      </div>
+
+      <button id="curve">Curve</button>
+      <div id="options_curve" style="display: none;"> 
+         <button name="linear" id="linear">Linear</button>
+         <button name="hermite" id="hermite">Hermite</button>
+         <button name="bezier" id="bezier">Bezier</button>
+         <button name="bspline" id="bspline">BSpline</button>
+         <button name="catmullrom" id="catmullrom">CatmullRom</button>
+      </div>
+      
+   </div>
+   <div style="position: absolute; width: 100%; height: 100%; top: 0;">
+      <canvas id="render_canvas"></canvas>
+      <canvas id="canvas"></canvas>
+   </div>
+
+<script>
+
+   // Logic for Linear Spline
+   Linear = function(ctx, points) {
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    let path_pixels = [];
+    for (let i = 0; i < points.length - 1; i++) {
+        let p0 = points[i];
+        let p1 = points[i + 1];
+
+        for (let j = 0; j < 100; j++) {
+            let t = j / 100;
+            let x = p0.x + t * (p1.x - p0.x);
+            let y = p0.y + t * (p1.y - p0.y);
+            path_pixels.push({x, y});
+        }
+        ctx.lineTo(p1.x, p1.y);
+    }
+    ctx.strokeStyle = 'black';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.closePath();
+    return path_pixels;
+   }
+
+   // Logic for Hermite Splines
+   Hermite = function(ctx, points) {
+      const tangents = [];
+      const n = points.length;
+      let path_pixels = [];
+
+      for (let i = 0; i < n; i++) {
+         if (i === 0) {
+               tangents.push([points[1].x - points[0].x, points[1].y - points[0].y]);
+         } else if (i === n - 1) {
+               tangents.push([points[n - 1].x - points[n - 2].x, points[n - 1].y - points[n - 2].y]);
+         } else {
+               tangents.push([
+                  (points[i + 1].x - points[i - 1].x) / 2,
+                  (points[i + 1].y - points[i - 1].y) / 2
+               ]);
+         }
+      }
+
+      let hermiteBasis = (t) => {
+         return [
+               2 * t ** 3 - 3 * t ** 2 + 1, // a
+               -2 * t ** 3 + 3 * t ** 2,    // b
+               t ** 3 - 2 * t ** 2 + t,     // c
+               t ** 3 - t ** 2              // d
+         ];
+      }
+
+      let hermiteSpline = (P0, P1, R0, R1, numPoints = 100) => {
+         const curve = [];
+         for (let i = 0; i <= numPoints; i++) {
+               const t = i / numPoints;
+               const [a, b, c, d] = hermiteBasis(t);
+
+               const x = a * P0.x + b * P1.x + c * R0[0] + d * R1[0];
+               const y = a * P0.y + b * P1.y + c * R0[1] + d * R1[1];
+
+               curve.push({x, y});
+               path_pixels.push({x, y});
+         }
+         return curve;
+      }
+
+
+      ctx.beginPath();
+      for (let i = 0; i < points.length - 1; i++) {
+         const P0 = points[i];
+         const P1 = points[i + 1];
+         const R0 = tangents[i];
+         const R1 = tangents[i + 1];
+
+         const curve = hermiteSpline(P0, P1, R0, R1);
+
+         ctx.moveTo(curve[0].x, curve[0].y);
+         for (let j = 1; j < curve.length; j++) {
+               ctx.lineTo(curve[j].x, curve[j].y);
+         }
+         ctx.strokeStyle = "black";
+         ctx.lineWidth = 2;
+         ctx.stroke();
+      }
+      ctx.closePath();
+      return path_pixels;
+   }
+
+   //Logic for Bezier
+    Bezier = function(ctx, points) {
+        let path_pixels = [];
+
+        let bezierBasis = (t) => {
+            return [
+                (1 - t) ** 3,           // a
+                3 * t * (1 - t) ** 2,   // b
+                3 * t ** 2 * (1 - t),   // c
+                t ** 3                  // d
+            ];
+        }
+
+        let bezierCurve = (P0, P1, P2, P3, numPoints = 100) => {
+            const curve = [];
+            for (let i = 0; i <= numPoints; i++) {
+                const t = i / numPoints;
+                const [a, b, c, d] = bezierBasis(t);
+
+                const x = a * P0.x + b * P1.x + c * P2.x + d * P3.x;
+                const y = a * P0.y + b * P1.y + c * P2.y + d * P3.y;
+
+                curve.push({x, y});
+                path_pixels.push({x, y});
+            }
+            return curve;
+        }
+
+        ctx.beginPath();
+        for (let i = 0; i < points.length - 3; i += 3) {
+            const P0 = points[i];
+            const P1 = points[i + 1];
+            const P2 = points[i + 2];
+            const P3 = points[i + 3];
+
+            const curve = bezierCurve(P0, P1, P2, P3);
+
+            ctx.moveTo(curve[0].x, curve[0].y);
+            for (let j = 1; j < curve.length; j++) {
+                ctx.lineTo(curve[j].x, curve[j].y);
+            }
+            ctx.strokeStyle = "green";
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
+        ctx.closePath();
+        return path_pixels;
+    }
+
+   // Logic for BSplines
+   BSpline = function(ctx, points) {
+      let path_pixels = [];
+
+      let bsplineBasis = (t) => {
+         return [
+               (1 - t) ** 3 / 6,                           // a
+               (3 * t ** 3 - 6 * t ** 2 + 4) / 6,          // b
+               (-3 * t ** 3 + 3 * t ** 2 + 3 * t + 1) / 6, // c
+               t ** 3 / 6                                  // d
+         ];
+      }
+
+      let bsplineCurve = (P0, P1, P2, P3, numPoints = 100) => {
+         const curve = [];
+         for (let i = 0; i <= numPoints; i++) {
+               const t = i / numPoints;
+               const [a, b, c, d] = bsplineBasis(t);
+
+               const x = a * P0.x + b * P1.x + c * P2.x + d * P3.x;
+               const y = a * P0.y + b * P1.y + c * P2.y + d * P3.y;
+
+               curve.push({x, y});
+               path_pixels.push({x, y});
+         }
+         return curve;
+      }
+
+      ctx.beginPath();
+      for (let i = 0; i < points.length - 3; i++) {
+         const P0 = points[i];
+         const P1 = points[i + 1];
+         const P2 = points[i + 2];
+         const P3 = points[i + 3];
+
+         const curve = bsplineCurve(P0, P1, P2, P3);
+
+         // Draw the curve
+         ctx.moveTo(curve[0].x, curve[0].y);
+         for (let j = 1; j < curve.length; j++) {
+               ctx.lineTo(curve[j].x, curve[j].y);
+         }
+         ctx.strokeStyle = "black";
+         ctx.lineWidth = 2;
+         ctx.stroke();
+      }
+      ctx.closePath();
+      return path_pixels;
+   }
+
+   // Logic for CatmullRom Curves
+   CatmullRom = function(ctx, points) {
+      let path_pixels = [];
+
+      let catmullRomBasis = (t) => {
+         return [
+               -0.5 * t ** 3 + t ** 2 - 0.5 * t,       // a
+               1.5 * t ** 3 - 2.5 * t ** 2 + 1,        // b
+               -1.5 * t ** 3 + 2 * t ** 2 + 0.5 * t,   // c
+               0.5 * t ** 3 - 0.5 * t ** 2             // d
+         ];
+      }
+
+      let catmullRomCurve = (P0, P1, P2, P3, numPoints = 100) => {
+         const curve = [];
+         for (let i = 0; i <= numPoints; i++) {
+               const t = i / numPoints;
+               const [a, b, c, d] = catmullRomBasis(t);
+
+               const x = a * P0.x + b * P1.x + c * P2.x + d * P3.x;
+               const y = a * P0.y + b * P1.y + c * P2.y + d * P3.y;
+
+               curve.push({x, y});
+               path_pixels.push({x, y});
+         }
+         return curve;
+      }
+
+      ctx.beginPath();
+      for (let i = 0; i < points.length - 3; i++) {
+         const P0 = points[i];
+         const P1 = points[i + 1];
+         const P2 = points[i + 2];
+         const P3 = points[i + 3];
+
+         const curve = catmullRomCurve(P0, P1, P2, P3);
+
+         // Draw the curve
+         ctx.moveTo(curve[0].x, curve[0].y);
+         for (let j = 1; j < curve.length; j++) {
+               ctx.lineTo(curve[j].x, curve[j].y);
+         }
+         ctx.strokeStyle = "black";
+         ctx.lineWidth = 2;
+         ctx.stroke();
+      }
+      ctx.closePath();
+      return path_pixels;
+   }
+</script>
+
+<script>
+
+      document.getElementById("curve").addEventListener("click", function() {
+      var curveOptions = document.getElementById("options_curve");
+
+      if (curveOptions.style.display === "none") {
+         curveOptions.style.display = "flex";
+      } else {
+         curveOptions.style.display = "none"; 
+      }
+      });
+
+      document.getElementById("editor").addEventListener("click", function() {
+      var editorTools = document.getElementById("options_editor");
+
+      if (editorTools.style.display === "none") {
+         editorTools.style.display = "flex"; 
+      } else {
+         editorTools.style.display = "none";
+      }
+      });
+
+
+      const devicePixelRatio = window.devicePixelRatio || 1;
+
+      let canvas = document.getElementById('canvas');
+      let render_canvas = document.getElementById('render_canvas');
+      let ctx = canvas.getContext('2d');
+
+      function resizeCanvas() {
+         canvas.width = window.innerWidth * devicePixelRatio;
+         canvas.height = window.innerHeight * devicePixelRatio;
+
+         render_canvas.width = window.innerWidth * devicePixelRatio;
+         render_canvas.height = window.innerHeight * devicePixelRatio;
+         gl.viewport(0, 0, render_canvas.width, render_canvas.height);
+      }
+
+      window.addEventListener('resize', resizeCanvas);
+
+      let coord = (x,y) => {
+         return {x, y};
+      }
+
+      let getPoint = (e) => {
+         let rect = canvas.getBoundingClientRect();
+         let x = (e.clientX * devicePixelRatio) - rect.left;
+         let y = (e.clientY * devicePixelRatio) - rect.top;
+         return coord(x, y);
+      }
+
+      let setMode = (e) => {
+         mode = e.target.id;
+      }
+
+      let setSpline = (e) => {
+         splineType = e.target.id;
+         renderPoints();
+         setPositions();
+      }
+
+      let clear = (e) => {
+         ctx.clearRect(0, 0, canvas.width, canvas.height);
+         points = [];
+         closed = false;
+         pixels = [];
+         positions = [];
+         position = 0;
+         gl.clearColor(0.0, 0.0, 0.0, 0.0); 
+         gl.clearDepth(1.0); 
+         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); 
+         reloadShaders();
+      }
+
+      let closePoints = (e) => {
+         if (points.length < 4) return;
+         closed = true;
+         renderPoints();
+         setPositions();
+      }
+
+      let setPositions = () => {
+         positions = pixels.map(p => canvasToWebGLCoords(p.x, p.y, canvas))
+         position = 0;
+      }
+
+      let mode = "spline";
+      let splineType = "catmullrom";
+
+      let points = [];
+      let activePoint = null;
+      let closed = false;
+      let pixels = [];
+
+      let positions = [];
+      let position = 0;
+
+      document.body.addEventListener('mousedown', (e) => {
+         switch(e.target.id) {
+            case "canvas": canvasDown(e); break;
+            case "spline": setMode(e); break;
+            case "move": setMode(e); break;
+            case "remove": setMode(e); break;
+            case "clear": clear(e); break;
+            case "close": closePoints(e); break;
+            case "linear": setSpline(e); break;
+            case "hermite": setSpline(e); break;
+            case "bezier": setSpline(e); break;
+            case "bspline": setSpline(e); break;
+            case "catmullrom": setSpline(e); break;
+         }
+      })
+
+      document.body.addEventListener('mouseup', (e) => {
+         switch(e.target.id) {
+            case "canvas": canvasUp(e); break;
+         }
+      })
+
+      document.body.addEventListener('mousemove', (e) => {
+         if (activePoint) {
+            let dot = document.getElementById('dot') || redDotCursor(e.clientX, e.clientY);
+            let point = getPoint(e);
+            activePoint.x = point.x;
+            activePoint.y = point.y;
+            dot.style.left = e.clientX + 'px';
+            dot.style.top = e.clientY + 'px';
+            renderPoints();
+         }
+      })
+
+      let canvasDown = (e) => {
+         if (closed) return;
+         let point = getPoint(e);
+         if (point.y < 40) return;
+         let overlap = points.some(p => Math.abs(p.x - point.x) < 10 && Math.abs(p.y - point.y) < 10);
+         switch (mode) {
+            case "spline": addPoint(point, overlap); break;
+            case "move": selectPoint(point, overlap); break;
+            case "remove": removePoint(point, overlap); break;
+         }
+      }
+
+      let canvasUp = (e) => {
+         let point = getPoint(e);
+         switch (mode) {
+            case "spline": renderPoints(); break;
+            case "move": movePoint(point); break;
+            case "remove": renderPoints(); break;
+         }
+      }
+
+      let metapoints = () => {
+         if (!closed) return points;
+         switch (splineType) {
+            case "linear": return points.concat(points[0]);
+            case "hermite": return points.concat(points[0]);
+            case "bezier": return points.concat(points[0]).concat(points[1]).concat(points[2]).concat(points[3]);
+            case "bspline": return points.concat(points[0]).concat(points[1]).concat(points[2]).concat(points[3]);
+            case "catmullrom": return points.concat(points[0]).concat(points[1]).concat(points[2]).concat(points[3]);
+         }
+      }
+
+      let addPoint = (point, overlap) => {
+         if (overlap) return;
+         points.push(point);
+      }
+
+      let selectPoint = (point, overlap) => {
+         if (overlap) {
+            activePoint = points.find(p => Math.abs(p.x - point.x) < 10 && Math.abs(p.y - point.y) < 10);
+         }
+      }
+
+      let removePoint = (point, overlap) => {
+         if (overlap) {
+            points = points.filter(p => Math.abs(p.x - point.x) > 10 || Math.abs(p.y - point.y) > 10);
+         }
+      }
+
+      let movePoint = (point) => {
+         if (activePoint) {
+            activePoint.x = point.x;
+            activePoint.y = point.y;
+            activePoint = null;
+         }
+         document.getElementById('dot')?.remove();
+         renderPoints();
+      }
+
+      let renderPoints = () => {
+         ctx.clearRect(0, 0, canvas.width, canvas.height);
+         if (points.length == 0) return;
+         renderCurve();
+         points.forEach(p => {
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
+            ctx.fillStyle = 'black';
+            ctx.fill();
+         });
+      }
+
+      let renderCurve = () => {
+         if (points.length < 2) return;
+         switch (splineType) {
+            case "linear": pixels = Linear(ctx, metapoints()); break;
+            case "hermite": pixels = Hermite(ctx, metapoints()); break;
+            case "bezier": pixels = Bezier(ctx, metapoints()); break;
+            case "bspline": pixels = BSpline(ctx, metapoints()); break;
+            case "catmullrom": pixels = CatmullRom(ctx, metapoints()); break;
+         }
+      }
+
+      let canvasToWebGLCoords = (x, y, canvas) => {
+         let rect = canvas.getBoundingClientRect();
+         let webGLX = ((x - rect.left) / rect.width * 2 - 2) / devicePixelRatio;
+         let webGLY = ((rect.height - (y - rect.top)) / rect.height * 2) / devicePixelRatio;
+         return { x: webGLX, y: webGLY };
+      }
+
+      // start GL coding
+      let C = t => Math.cos(t);
+      let S = t => Math.sin(t);
+      let mIdentity = () => [ 1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1 ];
+      let mPerspective = (fl, m) => matrixMultiply(m, [1,0,0,0, 0,1,0,0, 0,0,1,-1/fl, 0,0,0,1]);
+      let mRotateX = (t, m) => matrixMultiply(m, [1,0,0,0, 0,C(t),S(t),0, 0,-S(t),C(t),0, 0,0,0,1]);
+      let mRotateY = (t, m) => matrixMultiply(m, [C(t),0,-S(t),0, 0,1,0,0, S(t),0,C(t),0, 0,0,0,1]);
+      let mRotateZ = (t, m) => matrixMultiply(m, [C(t),S(t),0,0, -S(t),C(t),0,0, 0,0,1,0, 0,0,0,1]);
+      let mScale = (x,y,z, m) => matrixMultiply(m, [x,0,0,0, 0,y,0,0, 0,0,z,0, 0,0,0,1]);
+      let mTranslate = (x,y,z, m) => matrixMultiply(m, [1,0,0,0, 0,1,0,0, 0,0,1,0, x,y,z,1]);
+
+      function Matrix() {
+         let stack = [mIdentity()], top = 0;
+         let set = arg => { stack[top] = arg; return this; }
+         let get = () => stack[top];
+      
+         this.identity = () => set(mIdentity());
+         this.perspective = fl => set(mPerspective(fl, get()));
+         this.rotateX = t => set(mRotateX(t, get()));
+         this.rotateY = t => set(mRotateY(t, get()));
+         this.rotateZ = t => set(mRotateZ(t, get()));
+         this.scale = (x,y,z) => set(mScale(x,y,z, get()));
+         this.translate = (x,y,z) => set(mTranslate(x,y,z, get()));
+         this.get = () => get();
+         this.set = () => set();
+         this.save = () => set(stack[top++].slice());
+         this.restore = () => --top;
+      }
+
+      let start_gl = (canvas, vertexSize, vertexShader, fragmentShader) => {
+         let gl = canvas.getContext("webgl");
+
+         let program = gl.createProgram();
+         gl.program = program;
+         let addshader = (type, src) => {
+         let shader = gl.createShader(type);
+         gl.shaderSource(shader, src);
+         gl.compileShader(shader);
+         if (! gl.getShaderParameter(shader, gl.COMPILE_STATUS))
+            throw "Cannot compile shader:\n\n" + gl.getShaderInfoLog(shader);
+         gl.attachShader(program, shader);
+         };
+         addshader(gl.VERTEX_SHADER  , vertexShader  );
+         addshader(gl.FRAGMENT_SHADER, fragmentShader);
+         gl.linkProgram(program);
+         if (! gl.getProgramParameter(program, gl.LINK_STATUS))
+         throw "Could not link the shader program!";
+         gl.useProgram(program);
+         gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+         gl.enable(gl.DEPTH_TEST);
+         gl.depthFunc(gl.LEQUAL);
+         let vertexAttribute = (name, size, position) => {
+         let attr = gl.getAttribLocation(program, name);
+         gl.enableVertexAttribArray(attr);
+         gl.vertexAttribPointer(attr, size, gl.FLOAT, false, vertexSize * 4, position * 4);
+         }
+         vertexAttribute('aPos', 3, 0);
+         vertexAttribute('aNor', 3, 3);
+         return gl;
+      }
+
+// CREATE A TRIANGLE_STRIP MESH
+
+   let createMesh = (nu, nv, p) => {
+      let mesh = [];
+      for (let j = nv-1 ; j >= 0 ; j--) {
+         for (let i = 0 ; i <= nu ; i++)
+            mesh.push(p(i/nu,(j+1)/nv), p(i/nu,j/nv));
+         mesh.push(p(1,j/nv), p(0,j/nv));
+      }
+      return mesh.flat();
+   }
+
+let vertexSize = 6;
+      let vertexShader = `
+         attribute vec3 aPos, aNor;
+         uniform mat4 uMatrix, uInvMatrix;
+         varying vec3 vPos, vNor;
+         void main() {
+            vec4 pos = uMatrix * vec4(aPos, 1.0);
+            vec4 nor = vec4(aNor, 0.0) * uInvMatrix;
+            vPos = pos.xyz;
+            vNor = nor.xyz;
+            gl_Position = pos * vec4(1.,1.,-.1,1.);
+         }
+      `;
+
+      let fragmentShader = `
+         precision mediump float;
+         uniform vec3 uColor;
+         uniform float uTime;
+         varying vec3 vPos, vNor;
+
+         vec3 color;
+         float c;
+
+         void main(void) {
+            if (uColor == vec3(0., 1., 0.)) {
+                  c = .05 + max(0., dot(normalize(vNor), vec3(.57)));
+                  color = c * vec3(0.99, 0.99, 0.4);
+            } else {
+                  color = vec3(0.);
+            }
+            gl_FragColor = vec4(sqrt(color), 1.);
+         }
+      `;
+
+      // INITIALIZE GL AND GET UNIFORM NAMES
+
+      let gl, uColor, uInvMatrix, uMatrix, uTime;   
+
+      function reloadShaders() {
+         gl?.deleteProgram(gl.program);
+         gl = start_gl(render_canvas, vertexSize, vertexShader, fragmentShader);
+         uColor     = gl.getUniformLocation(gl.program, "uColor");
+         uInvMatrix = gl.getUniformLocation(gl.program, "uInvMatrix");
+         uMatrix    = gl.getUniformLocation(gl.program, "uMatrix");
+         uTime      = gl.getUniformLocation(gl.program, "uTime");
+      }    
+
+      reloadShaders();
+
+      // INSTANTIATE THE MATRIX OBJECT
+
+      let M = new Matrix();
+
+      let render = (Shape, color) => {
+         gl.uniform3fv      (uColor    , color );
+         gl.uniformMatrix4fv(uInvMatrix, false, mInverse(M.get()));
+         gl.uniformMatrix4fv(uMatrix   , false, M.get()          );
+
+         let mesh = Shape.mesh;
+         gl.bufferData(gl.ARRAY_BUFFER, mesh, gl.STATIC_DRAW);
+         gl.drawArrays(Shape.type ? gl.TRIANGLE_STRIP : gl.TRIANGLES, 0, mesh.length / vertexSize);
+      }
+
+      // THE ANIMATION LOOP
+
+      let startTime = Date.now() / 1000;
+
+      function renderFrame() {
+         requestAnimationFrame(renderFrame);
+         if (positions.length == 0) return;
+         let time = Date.now() / 1000 - startTime;
+         let {x, y} = positions[position];
+
+         gl.uniform1f(uTime, time);
+      }
+      resizeCanvas();
+      requestAnimationFrame(renderFrame);
+   </script>
+</body>
+</html>

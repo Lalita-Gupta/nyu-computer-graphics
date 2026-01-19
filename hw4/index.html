@@ -1,0 +1,336 @@
+<body bgcolor=black>
+
+    <center>
+    <canvas id='canvas1' width=800 height=800></canvas>
+    
+    <script type="module">
+    
+        const NQ = 8;
+    
+        import { 
+            identity,
+            translation,
+            rotationX,
+            rotationY,
+            rotationZ,
+            scale,
+            perspective,
+            multiply,
+            transpose,
+            toString,
+        } from './matrix.js';
+        import { 
+            sphere,
+            xParaboloid,
+            yParaboloid,
+            zParaboloid,
+            xSlab,
+            ySlab,
+            zSlab,
+            xCylinder,
+            yCylinder,
+            zCylinder,
+            everywhere
+        } from './quadric.js';
+    
+        import _fragmentShader from './fragmentShader.js';
+    
+    
+    let vertexSize = 3;
+    let vertexShader = `
+        attribute vec3 aPos;
+        varying   vec3 vPos;
+        void main() {
+            gl_Position = vec4(aPos, 1.0);
+            vPos = aPos;
+        }
+    `;
+    
+    let fragmentShader = _fragmentShader(NQ);
+    
+    // INITIALIZE GPU PROGRAM
+    
+    let start_gl = (canvas, meshData, vertexSize, vertexShader, fragmentShader) => {
+        let gl = canvas.getContext("webgl");
+        let program = gl.createProgram();
+        gl.program = program;
+        let addshader = (type, src) => {
+            let shader = gl.createShader(type);
+            gl.shaderSource(shader, src);
+            gl.compileShader(shader);
+            if (! gl.getShaderParameter(shader, gl.COMPILE_STATUS))
+                throw "Cannot compile shader:\n\n" + gl.getShaderInfoLog(shader);
+            gl.attachShader(program, shader);
+        };
+        addshader(gl.VERTEX_SHADER  , vertexShader  );
+        addshader(gl.FRAGMENT_SHADER, fragmentShader);
+        gl.linkProgram(program);
+        if (! gl.getProgramParameter(program, gl.LINK_STATUS))
+            throw "Could not link the shader program!";
+        gl.useProgram(program);
+        gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+        gl.enable(gl.DEPTH_TEST);
+        gl.depthFunc(gl.LEQUAL);
+        let vertexAttribute = (name, size, position) => {
+            let attr = gl.getAttribLocation(program, name);
+            gl.enableVertexAttribArray(attr);
+            gl.vertexAttribPointer(attr, size, gl.FLOAT, false, vertexSize * 4, position * 4);
+        }
+        vertexAttribute('aPos', 3, 0);
+        return gl;
+    }
+    
+    // LOGIC TO TRACK THE CURSOR
+    
+    let r = canvas1.getBoundingClientRect(), cursor = [0,0,0];
+    let setCursor = (e, z) => cursor = [ (e.clientX - r.left) / canvas1.width * 2 - 1,
+                                            1 - (e.clientY - r.top) / canvas1.height * 2,
+                                            z !== undefined ? z : cursor[2] ];
+    canvas1.onmousedown = e => setCursor(e, 1);
+    canvas1.onmousemove = e => setCursor(e,  );
+    canvas1.onmouseup   = e => setCursor(e, 0);
+    
+    // TRIANGLE DATA (IN THIS CASE, ONE SQUARE)
+    
+    let meshData = [
+        { type: 1, mesh: new Float32Array([ -1,1,0, 1,1,0, -1,-1,0, 1,-1,0 ]) },
+    ];
+    
+    // DEFINE A MATRIX INVERSE FUNCTION
+    
+    let matrixInverse = src => {
+        let dst = [], det = 0, cofactor = (c, r) => {
+            let s = (i, j) => src[c+i & 3 | (r+j & 3) << 2];
+            return (c+r & 1 ? -1 : 1) * ( (s(1,1) * (s(2,2) * s(3,3) - s(3,2) * s(2,3)))
+                                        - (s(2,1) * (s(1,2) * s(3,3) - s(3,2) * s(1,3)))
+                                        + (s(3,1) * (s(1,2) * s(2,3) - s(2,2) * s(1,3))) );
+        }
+        for (let n = 0 ; n < 16 ; n++) dst.push(cofactor(n >> 2, n & 3));
+        for (let n = 0 ; n <  4 ; n++) det += src[n] * dst[n << 2];
+        for (let n = 0 ; n < 16 ; n++) dst[n] /= det;
+        return dst;
+    }
+
+    let degreesToRadians = degrees => degrees * Math.PI / 180;
+    
+    // initial x,y positions of my flapping jellyfish
+    let initialPositions = Array.from({length: 4}, (e, i, arr) => {
+                let x = Math.random() * 5 - 2.5;
+                let y = Math.random() * 4 - 2;
+                return [x,y]
+            });
+
+    setTimeout(() => {
+        let gl = start_gl(canvas1, meshData, vertexSize, vertexShader, fragmentShader);
+    
+        // FIND LOCATIONS IN GPU PROGRAM OF UNIFORM VARIABLES
+    
+        let uFL       = gl.getUniformLocation(gl.program, "uFL"    );
+        let uTime     = gl.getUniformLocation(gl.program, "uTime"  );
+        let uCursor   = gl.getUniformLocation(gl.program, "uCursor"); 
+        let uL        = gl.getUniformLocation(gl.program, "uL"     ); 
+        let uA        = gl.getUniformLocation(gl.program, "uA"     ); 
+        let uB        = gl.getUniformLocation(gl.program, "uB"     ); 
+        let uC        = gl.getUniformLocation(gl.program, "uC"     ); 
+    
+        const materials = [
+            [0.5, 0.7, 0.2], // GOLD
+            [0.4, 0.05, 0.0], // COPPER
+            [0.0, 1.0, 0.0],  // RED PLASTIC
+            [0.1, 0.2, 0.3],
+            [0.8, 0.99, 0.9],
+            [0.3, 0.4, 0.4],
+            [0.8, 0.2, 0.2],
+            [0.8, 0.2, 0.2]
+        ];
+    
+        const highlights = [
+            [0.0, 0.0, 0.0], // GOLD highlight
+            [0.48, 0.06, 0.0], // COPPER highlight
+            [0.55, 0.21, 0.0],   // RED PLASTIC highlight
+            [0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0],
+            [0.0, 0.2, 0.0],
+            [0.0, 0.2, 0.0]
+        ];
+    
+        const powers = [8.0, 6.0, 20.0, 8.0, 2.0, 9.0, 8.0, 8.0];
+    
+        const uMaterialsLocation = gl.getUniformLocation(gl.program, 'uMaterials');
+        const uHighlightsLocation = gl.getUniformLocation(gl.program, 'uHighlights');
+        const uPowersLocation = gl.getUniformLocation(gl.program, 'uPowers');
+    
+        gl.uniform3fv(uMaterialsLocation, new Float32Array(materials.flat()));
+        gl.uniform3fv(uHighlightsLocation, new Float32Array(highlights.flat()));
+        gl.uniform1fv(uPowersLocation, new Float32Array(powers));
+    
+        // ANIMATE AND RENDER EACH ANIMATION FRAME
+    
+        let startTime = Date.now() / 1000;
+        setInterval(() => {
+            
+            // SET UNIFORM VARIABLES
+    
+            let time = Date.now() / 1000 - startTime;
+            gl.uniform1f(uTime, time);
+            gl.uniform3fv(uCursor, cursor);
+            gl.uniform3fv(uL, [-.57,-.57,-.57, .57,.57,.57]);
+            gl.uniform1f(uFL, 3);
+            
+            // DEFINE ANIMATION MATRICES
+    
+            let s1 = Math.sin(time);
+            let s2 = Math.sin(2 * time);
+            let s3 = Math.abs(s2) + 0.2;
+    
+    /**************************************************************************
+    
+            In matrix.js I have implemented these functions:
+    
+                translation(x,y,z)
+                rotationX(t)
+                rotationY(t)
+                rotationZ(t)
+                scale(x,y,z)
+                multiply(a,b)
+                transpose(m)
+    
+            In quadric.js I have defined these 4x4 matrices:
+    
+                sphere
+                xParaboloid
+                yParaboloid
+                zParaboloid
+                xSlab
+                ySlab
+                zSlab
+                xCylinder
+                yCylinder
+                zCylinder
+                everywhere
+    
+    **************************************************************************/
+
+            let toOrigin = (x, z) => Math.asin((x - 10.5) / (z - 10))
+
+            let updatePositions = (positions, time) => {
+                let newPositions = positions.map((pos, i) => {
+                    let x = pos[0] + Math.sin(time + i) * 0.05 + (0.1 * (Math.random() - 0.5));
+                    let y = pos[1] + Math.cos(time + i) * 0.05 + (0.1 * (Math.random() - 0.5));
+                    return [x, y];
+                });
+                return newPositions;
+            }
+
+            initialPositions = updatePositions(initialPositions, time);
+
+            let [p1, p2, p3, p4] = initialPositions;
+
+            let A = multiply(translation(p1[0],p1[1],-20),
+                        multiply(rotationX(degreesToRadians(90)), multiply(rotationZ(toOrigin(p1[0], -20)),
+                                multiply(scale(1,1,0.5*s3),
+                        scale(0.8,1,0.7)))));
+
+            let B = multiply(translation(p2[0],p2[1],-100),
+                        multiply(rotationX(degreesToRadians(90)), multiply(rotationZ(toOrigin(p2[0], -100)),
+                                multiply(scale(1,1,0.5*s3),
+                        scale(1,1,1)))));
+    
+            let C = multiply(translation(p3[0],p3[1],-30),
+                        multiply(rotationX(degreesToRadians(90)), multiply(rotationZ(toOrigin(p3[0], -30)),
+                                multiply(scale(1,1,0.5*s3),
+                            scale(.7,1.4,1)))));
+    
+            let D = multiply(translation(p4[0],p4[1],-15),
+                        multiply(rotationX(degreesToRadians(90)), multiply(rotationZ(toOrigin(p4[0], -15)),
+                                multiply(scale(1,1,0.5*s3),
+                            scale(.5,1,1)))));
+    
+            // cushion moon
+            let E = multiply(translation(10.5,10,-50), multiply(rotationX(s1),
+                        multiply(rotationZ(s2), scale(1,1,1))));
+    
+            // ground plane
+            let F = multiply(translation(0,-3.5,-20), scale(20,.7,20));
+
+            let G = multiply(translation(-3,0,-32), scale(1,8,1));
+
+            let H = multiply(translation(-4,-3.3,-22), scale(0.75,1.5,0.75));
+
+            // ANIMATE ALL QUADRICS FOR THIS FRAME
+    
+            // had to modify this function because I'm not using flat arrays
+            let transform = (Q,M) => {
+                let MI = matrixInverse(M);
+                return multiply(transpose(MI), multiply(Q, MI));
+            }
+    
+            let MA = [], MB = [], MC = [];
+    
+            let addShape = (M,a,b,c) => {
+                MA.push(transform(a, M));
+                MB.push(transform(b===undefined ? everywhere : b, M));
+                MC.push(transform(c===undefined ? everywhere : c, M));
+            }
+    
+            // addShape(A, sphere);
+            addShape(A, yParaboloid, ySlab);
+            addShape(B, yParaboloid, ySlab);
+            addShape(C, yParaboloid, ySlab);
+            // addShape(C, sphere);
+            addShape(D, yParaboloid, ySlab);
+            // cushion moon
+            addShape(E, xCylinder, yCylinder, zCylinder);
+            // ground plane
+            addShape(F, xSlab, ySlab, zSlab);
+            addShape(G, yCylinder, ySlab);
+            addShape(H, yCylinder, ySlab);
+    /*
+            let C1 = translation(0, 0, -20);
+            addShape(C1, sphere);
+    
+            let C2 = translation(5 * Math.sin(time), 0, -20 + 5 * Math.cos(time));
+            addShape(C2, sphere);
+    */
+    
+            // SEND QUADRIC DATA TO THE FRAGMENT SHADER
+    
+            // had to make it flatten my nested arrays w/ Infinity
+            gl.uniformMatrix4fv(uA, false, new Float32Array(MA.flat()));
+            gl.uniformMatrix4fv(uB, false, new Float32Array(MB.flat()));
+            gl.uniformMatrix4fv(uC, false, new Float32Array(MC.flat()));
+    
+    /**************************************************************************
+    
+        // The relevant code in fragmentShader.js looks like this:
+    
+        uniform mat4 uA[`+NQ+`], uB[`+NQ+`], uC[`+NQ+`];
+    
+        // In the fragment shader main(), these values can be access like this:
+    
+                for (int i = 0 ; i < `+NQ+` ; i++) {
+            mat4 Q = uA[i];
+    
+            float a = Q[0].x;
+            float j = Q[3].w;
+            Q[1].y
+            Q[2].z
+            Q[3].x
+            ...
+            }
+    
+    **************************************************************************/
+    
+            // RENDER THE FRAME
+    
+            for (let n = 0 ; n < meshData.length ; n++) {
+                let mesh = meshData[n].mesh;
+                gl.bufferData(gl.ARRAY_BUFFER, mesh, gl.STATIC_DRAW);
+                gl.drawArrays(meshData[n].type ? gl.TRIANGLE_STRIP : gl.TRIANGLES, 0, mesh.length / vertexSize);
+            }
+        }, 30);
+    }, 100);
+    </script>
+    
+        
